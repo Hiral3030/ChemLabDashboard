@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chemistry Lab Air Quality Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      background: linear-gradient(to bottom right, #e0f7fa, #ffffff);
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    .glass {
+      background: rgba(255, 255, 255, 0.3);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+  </style>
+</head>
+
+<body class="min-h-screen p-6">
+  <header class="text-center mb-8">
+    <h1 class="text-4xl font-bold text-sky-700">Chemistry Lab Air Quality Dashboard</h1>
+    <p class="text-gray-600">Live Monitoring of Lab Gases</p>
+  </header>
+
+  <div id="sensorCards" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+    <!-- Sensor Cards Injected Here -->
+  </div>
+
+  <div class="text-center mt-10">
+    <button id="downloadCsv" class="bg-sky-600 hover:bg-sky-700 text-white font-semibold py-2 px-6 rounded-xl shadow-lg">Download CSV Data</button>
+  </div>
+
+  <audio id="buzzer" src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg"></audio>
+
+  <script>
+    const channels = [
+      { id: 2903902, gases: ['Methane (CH₄)', 'CO₂', 'NH₃', 'Hydrogen (H₂)'] },
+      { id: 2916597, gases: ['Benzene', 'NOx', 'Sulfur Dioxide (SO₂)', 'LPG', 'Butane'] },
+      { id: 2918153, gases: ['Natural Gas', 'Carbon Monoxide (CO)', 'Temperature', 'Humidity'] }
+    ];
+
+    const thresholds = {
+      'Methane (CH₄)': 5000,
+      'CO₂': 1000,
+      'NH₃': 50,
+      'Hydrogen (H₂)': 40,
+      'Benzene': 5,
+      'NOx': 100,
+      'Sulfur Dioxide (SO₂)': 20,
+      'LPG': 500,
+      'Butane': 800,
+      'Natural Gas': 1000,
+      'Carbon Monoxide (CO)': 35,
+      'Temperature': 50,
+      'Humidity': 90
+    };
+
+    async function fetchLatest(channel) {
+      const res = await fetch(`https://api.thingspeak.com/channels/${channel.id}/feeds.json?results=1`);
+      const data = await res.json();
+      const feed = data.feeds[0];
+      return channel.gases.map((gas, i) => ({ gas, value: parseFloat(feed[`field${i + 1}`]) }));
+    }
+
+    function createGauge(gas, value) {
+      const max = thresholds[gas] * 2;
+      const color = value > thresholds[gas] ? 'red' : value > thresholds[gas] * 0.7 ? 'yellow' : 'green';
+      return `<div class="glass p-4 rounded-xl shadow text-center">
+        <h2 class="text-xl font-semibold mb-2">${gas}</h2>
+        <div class="w-full h-32 relative">
+          <svg viewBox="0 0 200 100" class="w-full h-full">
+            <path d="M10,100 A90,90 0 0,1 190,100" fill="none" stroke="#eee" stroke-width="20" />
+            <path d="M10,100 A90,90 0 0,1 ${10 + (value / max) * 180},100" fill="none" stroke="${color}" stroke-width="20" />
+          </svg>
+          <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-2xl font-bold">${value || 0}</div>
+        </div>
+      </div>`;
+    }
+
+    async function loadDashboard() {
+      const sensorDiv = document.getElementById('sensorCards');
+      for (const ch of channels) {
+        const values = await fetchLatest(ch);
+        for (const { gas, value } of values) {
+          sensorDiv.innerHTML += createGauge(gas, value);
+          if (value > thresholds[gas]) {
+            document.getElementById('buzzer').play();
+            alert(`⚠️ ${gas} is at a dangerous level: ${value}`);
+          }
+        }
+      }
+    }
+
+    async function downloadCSV() {
+      const allData = [];
+      for (const ch of channels) {
+        const res = await fetch(`https://api.thingspeak.com/channels/${ch.id}/feeds.json?results=100`);
+        const data = await res.json();
+        data.feeds.forEach(feed => {
+          const row = [feed.created_at];
+          ch.gases.forEach((_, i) => row.push(feed[`field${i + 1}`] || ''));
+          allData.push(row);
+        });
+      }
+      let csv = 'Time,' + channels.map(c => c.gases.join(',')).join(',') + '\n';
+      csv += allData.map(r => r.join(',')).join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'chem_lab_air_quality_data.csv';
+      a.click();
+    }
+
+    document.getElementById('downloadCsv').addEventListener('click', downloadCSV);
+    loadDashboard();
+  </script>
+</body>
+
+</html>
